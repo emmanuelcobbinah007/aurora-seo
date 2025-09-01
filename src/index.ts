@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+
 import { Command } from "commander";
 import initCommand from "./commands/init.js";
 import generateCommand from "./commands/generate.js";
@@ -7,17 +8,18 @@ const program = new Command();
 
 program
   .name("aurora-seo")
-  .description("One command to make your Next.js project SEO-ready")
-  .version("0.1.0");
+  .description("The fastest way to add SEO to your Next.js project")
+  .version("1.0.0");
 
 program
   .command("init")
-  .description("Initialize SEO setup in your Next.js project")
+  .description("Initialize SEO configuration for your Next.js project")
   .action(initCommand);
 
 program
   .command("generate")
-  .description("Generate sitemap and robots.txt")
+  .description("Generate SEO assets based on your configuration")
+  .option("--force", "Skip confirmation prompts")
   .action(generateCommand);
 
-program.parse(process.argv);
+program.parse();
