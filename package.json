@@ -51,18 +51,18 @@
   },
   "homepage": "https://github.com/aurorasoftwarelabs/aurora-seo#readme",
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=16.0.0"
   },
   "peerDependencies": {
     "next": ">=11.0.0"
   },
   "dependencies": {
-    "chalk": "^5.3.0",
+    "chalk": "^4.1.2",
     "commander": "^11.1.0",
-    "inquirer": "^9.2.12"
+    "inquirer": "^8.2.6"
   },
   "devDependencies": {
-    "@types/inquirer": "^9.0.7",
+    "@types/inquirer": "^8.2.10",
     "@types/node": "^20.8.0",
     "typescript": "^5.2.2"
   }
