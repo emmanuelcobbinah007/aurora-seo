@@ -1,0 +1,133 @@
+name: Publish to npm
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        registry-url: 'https://registry.npmjs.org'
+
+    - name: Configure Git
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run tests
+      run: npm run test
+
+    - name: Run linter
+      run: npm run lint
+
+    - name: Build project
+      run: npm run build
+
+    - name: Verify build artifacts
+      run: |
+        test -f dist/index.js
+        test -f dist/index.d.ts
+        echo "Build artifacts verified!"
+
+    - name: Version bump (if manual trigger)
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        npm version ${{ github.event.inputs.version_type }} --no-git-tag-version
+        echo "NEW_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+    - name: Get version from package.json
+      run: |
+        echo "PACKAGE_VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_ENV
+
+    - name: Create release tag (if manual trigger)
+      if: github.event_name == 'workflow_dispatch'
+      run: |
+        git add package.json
+        git commit -m "chore: bump version to ${{ env.NEW_VERSION }}"
+        git tag -a "v${{ env.NEW_VERSION }}" -m "Release v${{ env.NEW_VERSION }}"
+        git push origin main --tags
+
+    - name: Check if version already published
+      run: |
+        if npm view aurora-seo@${{ env.PACKAGE_VERSION }} version; then
+          echo "Version ${{ env.PACKAGE_VERSION }} already published"
+          echo "SKIP_PUBLISH=true" >> $GITHUB_ENV
+        else
+          echo "Version ${{ env.PACKAGE_VERSION }} not published, proceeding"
+          echo "SKIP_PUBLISH=false" >> $GITHUB_ENV
+        fi
+
+    - name: Publish to npm
+      if: env.SKIP_PUBLISH == 'false'
+      run: npm publish
+      env:
+        NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+    - name: Create GitHub Release (if manual trigger)
+      if: github.event_name == 'workflow_dispatch' && env.SKIP_PUBLISH == 'false'
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: v${{ env.NEW_VERSION }}
+        release_name: Release v${{ env.NEW_VERSION }}
+        body: |
+          ## Changes in v${{ env.NEW_VERSION }}
+          
+          See [CHANGELOG.md](https://github.com/aurorasoftwarelabs/aurora-seo/blob/main/CHANGELOG.md) for details.
+          
+          ## Installation
+          ```bash
+          npm install -g aurora-seo@${{ env.NEW_VERSION }}
+          ```
+          
+          ## Quick Start
+          ```bash
+          npx aurora-seo@${{ env.NEW_VERSION }} init
+          ```
+        draft: false
+        prerelease: false
+
+    - name: Notify success
+      if: env.SKIP_PUBLISH == 'false'
+      run: |
+        echo "🎉 Successfully published aurora-seo@${{ env.PACKAGE_VERSION }} to npm!"
+        echo "📦 Package: https://www.npmjs.com/package/aurora-seo"
+        echo "🔗 GitHub: https://github.com/aurorasoftwarelabs/aurora-seo"
+
+  notify-failure:
+    runs-on: ubuntu-latest
+    needs: publish
+    if: failure()
+
+    steps:
+    - name: Notify failure
+      run: |
+        echo "❌ Publishing failed!"
+        echo "Check the workflow logs for details."
