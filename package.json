@@ -1,6 +1,6 @@
 {
   "name": "aurora-seo",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "The fastest way to add SEO to your Next.js project. Automatically generates sitemaps, robots.txt, metadata, and Google Search Console verification.",
   "main": "dist/index.js",
   "publishConfig": {
