@@ -8,38 +8,80 @@ export async function generateMetadata(config: SEOConfig) {
 
   const projectRoot = process.cwd();
 
-  // Check if it's App Router or Pages Router
-  const appLayoutPath = path.join(projectRoot, "app", "layout.tsx");
-  const appLayoutJsPath = path.join(projectRoot, "app", "layout.js");
-  const pagesAppPath = path.join(projectRoot, "pages", "_app.tsx");
-  const pagesAppJsPath = path.join(projectRoot, "pages", "_app.js");
+  // Check for both src/app and app directory structures
+  const possibleAppDirs = [
+    path.join(projectRoot, "src", "app"),
+    path.join(projectRoot, "app"),
+  ];
 
-  if (fs.existsSync(appLayoutPath) || fs.existsSync(appLayoutJsPath)) {
-    // App Router
-    await injectAppRouterMetadata(
-      config,
-      fs.existsSync(appLayoutPath) ? appLayoutPath : appLayoutJsPath
+  const possiblePagesDirs = [
+    path.join(projectRoot, "src", "pages"),
+    path.join(projectRoot, "pages"),
+  ];
+
+  // Find the actual app directory
+  let appDir = null;
+  let layoutPath = null;
+
+  for (const dir of possibleAppDirs) {
+    const tsxPath = path.join(dir, "layout.tsx");
+    const jsxPath = path.join(dir, "layout.js");
+
+    if (fs.existsSync(tsxPath) || fs.existsSync(jsxPath)) {
+      appDir = dir;
+      layoutPath = fs.existsSync(tsxPath) ? tsxPath : jsxPath;
+      break;
+    }
+  }
+
+  // Find pages directory if no app directory
+  let pagesDir = null;
+  let appPath = null;
+
+  if (!appDir) {
+    for (const dir of possiblePagesDirs) {
+      const tsxPath = path.join(dir, "_app.tsx");
+      const jsxPath = path.join(dir, "_app.js");
+
+      if (fs.existsSync(tsxPath) || fs.existsSync(jsxPath)) {
+        pagesDir = dir;
+        appPath = fs.existsSync(tsxPath) ? tsxPath : jsxPath;
+        break;
+      }
+    }
+  }
+
+  if (appDir && layoutPath) {
+    // App Router found
+    logger.info(`Found App Router at: ${path.relative(projectRoot, appDir)}`);
+    await injectAppRouterMetadata(config, layoutPath);
+    await generateDirectoryLayouts(config, appDir);
+  } else if (pagesDir && appPath) {
+    // Pages Router found
+    logger.info(
+      `Found Pages Router at: ${path.relative(projectRoot, pagesDir)}`
     );
-    await generateDirectoryLayouts(config); // Add this line
-  } else if (fs.existsSync(pagesAppPath) || fs.existsSync(pagesAppJsPath)) {
-    // Pages Router
-    await injectPagesRouterMetadata(
-      config,
-      fs.existsSync(pagesAppPath) ? pagesAppPath : pagesAppJsPath
-    );
+    await injectPagesRouterMetadata(config, appPath);
   } else {
+    // No existing structure found - create App Router
+    // Default to src/app if src directory exists, otherwise app
+    const srcExists = fs.existsSync(path.join(projectRoot, "src"));
+    const targetAppDir = srcExists
+      ? path.join(projectRoot, "src", "app")
+      : path.join(projectRoot, "app");
+
     logger.warn(
-      "No layout.tsx or _app.tsx found. Creating App Router layout..."
+      `No layout found. Creating App Router at: ${path.relative(
+        projectRoot,
+        targetAppDir
+      )}`
     );
-    await createAppRouterLayout(config);
-    await generateDirectoryLayouts(config); // Add this line
+    await createAppRouterLayout(config, targetAppDir);
+    await generateDirectoryLayouts(config, targetAppDir);
   }
 }
 
-async function generateDirectoryLayouts(config: SEOConfig) {
-  const projectRoot = process.cwd();
-  const appDir = path.join(projectRoot, "app");
-
+async function generateDirectoryLayouts(config: SEOConfig, appDir: string) {
   if (!fs.existsSync(appDir)) {
     return;
   }
@@ -47,12 +89,16 @@ async function generateDirectoryLayouts(config: SEOConfig) {
   logger.info("Generating directory-specific layouts...");
 
   // Recursively scan app directory for subdirectories
-  function scanAndCreateLayouts(currentDir: string, relativePath: string = "") {
+  function scanAndCreateLayouts(currentDir: string) {
     const items = fs.readdirSync(currentDir, { withFileTypes: true });
 
     for (const item of items) {
-      if (item.isDirectory() && !item.name.startsWith("[")) {
-        // Skip dynamic routes
+      if (
+        item.isDirectory() &&
+        !item.name.startsWith("[") &&
+        !item.name.startsWith("(")
+      ) {
+        // Skip dynamic routes and route groups
         const dirPath = path.join(currentDir, item.name);
         const layoutPath = path.join(dirPath, "layout.tsx");
 
@@ -62,7 +108,7 @@ async function generateDirectoryLayouts(config: SEOConfig) {
         }
 
         // Recursively scan subdirectories
-        scanAndCreateLayouts(dirPath, relativePath + "/" + item.name);
+        scanAndCreateLayouts(dirPath);
       }
     }
   }
@@ -168,14 +214,12 @@ async function injectPagesRouterMetadata(config: SEOConfig, appPath: string) {
   );
 }
 
-async function createAppRouterLayout(config: SEOConfig) {
-  const projectRoot = process.cwd();
-  const appDir = path.join(projectRoot, "app");
-  const layoutPath = path.join(appDir, "layout.tsx");
+async function createAppRouterLayout(config: SEOConfig, targetAppDir: string) {
+  const layoutPath = path.join(targetAppDir, "layout.tsx");
 
   // Create app directory if it doesn't exist
-  if (!fs.existsSync(appDir)) {
-    fs.mkdirSync(appDir, { recursive: true });
+  if (!fs.existsSync(targetAppDir)) {
+    fs.mkdirSync(targetAppDir, { recursive: true });
   }
 
   const metadata = config.metadata!;

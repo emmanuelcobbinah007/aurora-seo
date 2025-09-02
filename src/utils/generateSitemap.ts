@@ -12,19 +12,44 @@ export async function generateSitemap(
 ) {
   logger.info("Generating sitemap.xml...");
 
+  const possibleAppDirs = [
+    path.join(process.cwd(), "src", "app"),
+    path.join(process.cwd(), "app"),
+  ];
+
   const projectRoot = process.cwd();
   let routes: string[] = [];
 
   const pagesDir = path.join(projectRoot, "pages");
-  const appDir = path.join(projectRoot, "app");
+  const srcPagesDir = path.join(projectRoot, "src", "pages");
 
-  if (fs.existsSync(pagesDir)) {
+  let appDir: string | null = null;
+  for (const dir of possibleAppDirs) {
+    if (fs.existsSync(dir)) {
+      appDir = dir;
+      break;
+    }
+  }
+
+  // Check for Pages Router first (both src/pages and pages)
+  if (fs.existsSync(srcPagesDir)) {
+    routes = getNextRoutes(srcPagesDir);
+    logger.info("Using src/pages directory for route discovery");
+  } else if (fs.existsSync(pagesDir)) {
     routes = getNextRoutes(pagesDir);
-  } else if (fs.existsSync(appDir)) {
+    logger.info("Using pages directory for route discovery");
+  } else if (appDir && fs.existsSync(appDir)) {
+    // App Router (appDir is guaranteed to be non-null here)
     routes = getNextRoutes(appDir);
+    logger.info(
+      `Using ${path.relative(
+        projectRoot,
+        appDir
+      )} directory for route discovery`
+    );
   } else {
     logger.warn(
-      "No `pages/` or `app/` directory found, falling back to default routes."
+      "No `pages/`, `src/pages/`, `app/`, or `src/app/` directory found, falling back to default routes."
     );
     routes = ["/"];
   }
@@ -92,22 +117,23 @@ export async function generateSitemap(
   const defaultPriority = config?.sitemap?.priority || 0.7;
 
   const sitemap = `<?xml version="1.0" encoding="UTF-8"?>
-  <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-    ${routes
-      .map(
-        (route) => `
-      <url>
-        <loc>${siteUrl.replace(/\/$/, "")}${route}</loc>
-        <changefreq>${changefreq}</changefreq>
-        <priority>${route === "/" ? "1.0" : defaultPriority}</priority>
-      </url>`
-      )
-      .join("\n")}
-  </urlset>`;
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+${routes
+  .map(
+    (route) => `  <url>
+    <loc>${siteUrl.replace(/\/$/, "")}${route}</loc>
+    <changefreq>${changefreq}</changefreq>
+    <priority>${route === "/" ? "1.0" : defaultPriority}</priority>
+  </url>`
+  )
+  .join("\n")}
+</urlset>`;
 
   const sitemapPath = path.resolve(paths.sitemap);
   fs.mkdirSync(path.dirname(sitemapPath), { recursive: true });
   fs.writeFileSync(sitemapPath, sitemap);
 
-  logger.success(`Sitemap saved at ${sitemapPath}`);
+  logger.success(
+    `Sitemap saved at ${sitemapPath} with ${routes.length} routes`
+  );
 }
