@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { logger } from "./logger.js";
 import { SEOConfig } from "../types/config.js";
+import inquirer from "inquirer";
 
 export async function generateMetadata(config: SEOConfig) {
   logger.info("Generating metadata injection...");
@@ -88,7 +89,7 @@ async function generateDirectoryLayouts(config: SEOConfig, appDir: string) {
 
   logger.info("Generating directory-specific layouts...");
 
-  // Recursively scan app directory for subdirectories
+  // Recursively scan app directory for subdirectories with page.tsx files
   function scanAndCreateLayouts(currentDir: string) {
     const items = fs.readdirSync(currentDir, { withFileTypes: true });
 
@@ -100,14 +101,23 @@ async function generateDirectoryLayouts(config: SEOConfig, appDir: string) {
       ) {
         // Skip dynamic routes and route groups
         const dirPath = path.join(currentDir, item.name);
-        const layoutPath = path.join(dirPath, "layout.tsx");
 
-        // Only create if layout doesn't already exist
-        if (!fs.existsSync(layoutPath)) {
-          createDirectoryLayout(dirPath, item.name, config);
+        // Check if this directory has a page.tsx or page.js file
+        const hasPageTsx = fs.existsSync(path.join(dirPath, "page.tsx"));
+        const hasPageJs = fs.existsSync(path.join(dirPath, "page.js"));
+
+        if (hasPageTsx || hasPageJs) {
+          // This is a valid route directory
+          const layoutPath = path.join(dirPath, "layout.tsx");
+
+          // Only create if layout doesn't already exist
+          if (!fs.existsSync(layoutPath)) {
+            createDirectoryLayout(dirPath, item.name, config);
+          }
         }
 
-        // Recursively scan subdirectories
+        // Recursively scan subdirectories regardless of page presence
+        // (subdirectories might have pages even if parent doesn't)
         scanAndCreateLayouts(dirPath);
       }
     }
@@ -141,69 +151,129 @@ export default function ${pageTitle}Layout({
 }`;
 
   fs.writeFileSync(layoutPath, layoutContent);
-  logger.info(`Created layout for /${dirName} directory`);
+  logger.success(`Created layout for /${dirName} directory (has page.tsx)`);
 }
 
 async function injectAppRouterMetadata(config: SEOConfig, layoutPath: string) {
   logger.info("Detected App Router - updating layout.tsx...");
 
-  const metadata = config.metadata!;
-  const metadataObject = `
-export const metadata = {
-  title: {
-    template: '%s | ${metadata.title}',
-    default: '${metadata.title}',
-  },
-  description: "${metadata.description}",
-  keywords: [${metadata.keywords?.map((k) => `"${k}"`).join(", ")}],
-  authors: [{ name: "${metadata.author}" }],
-  openGraph: {
-    title: "${metadata.openGraph?.title}",
-    description: "${metadata.openGraph?.description}",
-    url: "${config.siteUrl}",
-    siteName: "${metadata.title}",
-    images: [{
-      url: "${metadata.openGraph?.image}",
-    }],
-    type: "${metadata.openGraph?.type}",
-  },
-  twitter: {
-    card: "${metadata.twitter?.card}",
-    title: "${metadata.twitter?.title}",
-    description: "${metadata.twitter?.description}",
-    images: ["${metadata.twitter?.image}"],
-  },
-}`;
-
   const content = fs.readFileSync(layoutPath, "utf8");
 
   // Check if metadata already exists
   if (content.includes("export const metadata")) {
-    logger.info("Metadata already exists in layout.tsx - skipping injection");
-    return;
-  }
+    logger.info("Metadata already exists in layout.tsx");
 
-  // Inject metadata after imports
-  const lines = content.split("\n");
-  let insertIndex = 0;
+    // Prompt user about overwriting
+    const { overwrite } = await inquirer.prompt([
+      {
+        type: "confirm",
+        name: "overwrite",
+        message:
+          "Would you like to overwrite the existing metadata with AuroraSEO configuration?",
+        default: false,
+      },
+    ]);
 
-  // Find the last import statement with safety check
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    if (
-      line &&
-      (line.startsWith("import ") ||
-        line.startsWith("'use client'") ||
-        line.startsWith('"use client"'))
-    ) {
-      insertIndex = i + 1;
+    if (!overwrite) {
+      logger.warn("Skipping metadata injection - existing metadata preserved");
+      return;
     }
+
+    logger.info("Proceeding with metadata overwrite...");
   }
 
-  lines.splice(insertIndex, 0, "", metadataObject, "");
+  const metadata = config.metadata!;
 
-  fs.writeFileSync(layoutPath, lines.join("\n"));
-  logger.success(`Metadata injected into ${layoutPath}`);
+  // Build metadata object with GSC verification if present
+  let metadataFields = [
+    `  title: {
+    template: '%s | ${metadata.title}',
+    default: '${metadata.title}',
+  }`,
+    `  description: "${metadata.description}"`,
+  ];
+
+  // Add keywords if present
+  if (metadata.keywords && metadata.keywords.length > 0) {
+    metadataFields.push(
+      `  keywords: [${metadata.keywords.map((k) => `"${k}"`).join(", ")}]`
+    );
+  }
+
+  // Add author if present
+  if (metadata.author) {
+    metadataFields.push(`  authors: [{ name: "${metadata.author}" }]`);
+  }
+
+  // Add GSC verification if present
+  if (
+    config.googleSearchConsole?.enabled &&
+    config.googleSearchConsole?.method === "meta"
+  ) {
+    metadataFields.push(`  verification: {
+    google: "${config.googleSearchConsole.value}",
+  }`);
+  }
+
+  // Add Open Graph if present
+  if (metadata.openGraph) {
+    metadataFields.push(`  openGraph: {
+    title: "${metadata.openGraph.title || metadata.title}",
+    description: "${metadata.openGraph.description || metadata.description}",
+    url: "${config.siteUrl}",
+    siteName: "${metadata.title}",
+    images: [{
+      url: "${metadata.openGraph.image || `${config.siteUrl}/og-image.jpg`}",
+    }],
+    type: "${metadata.openGraph.type || "website"}",
+  }`);
+  }
+
+  // Add Twitter Card if present
+  if (metadata.twitter) {
+    metadataFields.push(`  twitter: {
+    card: "${metadata.twitter.card || "summary_large_image"}",
+    title: "${metadata.twitter.title || metadata.title}",
+    description: "${metadata.twitter.description || metadata.description}",
+    images: ["${metadata.twitter.image || `${config.siteUrl}/og-image.jpg`}"],
+  }`);
+  }
+
+  const metadataObject = `
+export const metadata = {
+${metadataFields.join(",\n")}
+}`;
+
+  if (content.includes("export const metadata")) {
+    // Replace existing metadata
+    const updatedContent = content.replace(
+      /export const metadata[\s\S]*?(?=\n\nexport|\nexport default|$)/,
+      metadataObject.trim()
+    );
+    fs.writeFileSync(layoutPath, updatedContent);
+    logger.success(`Existing metadata replaced in ${layoutPath}`);
+  } else {
+    // Inject new metadata after imports
+    const lines = content.split("\n");
+    let insertIndex = 0;
+
+    // Find the last import statement
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      if (
+        line &&
+        (line.startsWith("import ") ||
+          line.startsWith("'use client'") ||
+          line.startsWith('"use client"'))
+      ) {
+        insertIndex = i + 1;
+      }
+    }
+
+    lines.splice(insertIndex, 0, "", metadataObject, "");
+    fs.writeFileSync(layoutPath, lines.join("\n"));
+    logger.success(`Metadata injected into ${layoutPath}`);
+  }
 }
 
 async function injectPagesRouterMetadata(config: SEOConfig, appPath: string) {
@@ -223,6 +293,38 @@ async function createAppRouterLayout(config: SEOConfig, targetAppDir: string) {
   }
 
   const metadata = config.metadata!;
+
+  // Build the layout content with proper metadata
+  let metadataFields = [
+    `  title: {
+    template: '%s | ${metadata.title}',
+    default: '${metadata.title}',
+  }`,
+    `  description: "${metadata.description}"`,
+  ];
+
+  // Add keywords if present
+  if (metadata.keywords && metadata.keywords.length > 0) {
+    metadataFields.push(
+      `  keywords: [${metadata.keywords.map((k) => `"${k}"`).join(", ")}]`
+    );
+  }
+
+  // Add author if present
+  if (metadata.author) {
+    metadataFields.push(`  authors: [{ name: "${metadata.author}" }]`);
+  }
+
+  // Add GSC verification if present
+  if (
+    config.googleSearchConsole?.enabled &&
+    config.googleSearchConsole?.method === "meta"
+  ) {
+    metadataFields.push(`  verification: {
+    google: "${config.googleSearchConsole.value}",
+  }`);
+  }
+
   const layoutContent = `import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
 import './globals.css'
@@ -230,29 +332,7 @@ import './globals.css'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: {
-    template: '%s | ${metadata.title}',
-    default: '${metadata.title}', // fallback title
-  },
-  description: "${metadata.description}",
-  keywords: [${metadata.keywords?.map((k) => `"${k}"`).join(", ")}],
-  authors: [{ name: "${metadata.author}" }],
-  openGraph: {
-    title: "${metadata.openGraph?.title}",
-    description: "${metadata.openGraph?.description}",
-    url: "${config.siteUrl}",
-    siteName: "${metadata.title}",
-    images: [{
-      url: "${metadata.openGraph?.image}",
-    }],
-    type: "${metadata.openGraph?.type}",
-  },
-  twitter: {
-    card: "${metadata.twitter?.card}",
-    title: "${metadata.twitter?.title}",
-    description: "${metadata.twitter?.description}",
-    images: ["${metadata.twitter?.image}"],
-  },
+${metadataFields.join(",\n")}
 }
 
 export default function RootLayout({
