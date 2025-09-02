@@ -8,7 +8,7 @@
   },
   "types": "dist/index.d.ts",
   "bin": {
-    "aurora-seo": "dist/index.js"
+    "aurora-seo": "dist/src/index.js"
   },
   "files": [
     "dist/**/*",
